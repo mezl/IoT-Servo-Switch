@@ -7,7 +7,7 @@
 
 #include <Servo.h>
 
-#define BAUD 57600
+#define BAUD 115200 
 
 //GPIO0-GPIO15 can be INPUT, OUTPUT, or INPUT_PULLUP. GPIO16 can be INPUT, OUTPUT, or INPUT_PULLDOWN_16. I
 
@@ -16,9 +16,8 @@
 #define POS_OFF 160
 #define POS_ON 30
 
-#define TESTING_MODE false
-#define LIGHT_SWITCH_PIN 12
-
+#define TESTING_MODE false 
+#define LIGHT_SWITCH_PIN 12//only for testing
 
 
 #ifdef ESP8266
@@ -48,10 +47,14 @@
     //#include "webjs.h";
     #include "webcss.h";
     
-    // Support Amazon Alexa
-    #include <fauxmoESP.h>
-    fauxmoESP fauxmo;
+    // Support Amazon Alexa using Sinric
+    #include <Arduino.h>
+    #include <ESP8266WiFiMulti.h>
+    #include <WebSocketsClient.h> //  https://github.com/kakopappa/sinric/wiki/How-to-add-dependency-libraries
+    #include <ArduinoJson.h> // https://github.com/kakopappa/sinric/wiki/How-to-add-dependency-libraries
+    #include <StreamString.h>
 
+    WebSocketsClient webSocket;
 #endif
 
 
@@ -155,7 +158,7 @@ void wifiSetup() {
     // Wait
     while (WiFi.status() != WL_CONNECTED) {
         Serial.print(".");
-        printLcd(F("."));
+        printLcd(F("."),false,false);
         delay(100);
     }
     Serial.println();
@@ -166,24 +169,106 @@ void wifiSetup() {
     sprintf(buff,"%s",WiFi.localIP().toString().c_str());
     printLCD2(buff,true);
 
-    // initialize Alexa, adding more servo here
-    fauxmo.addDevice("dorm");
-    fauxmo.onMessage(alexa_callback);
-    
+
 #endif
 }
 //==============================================
-void alexa_callback(uint8_t device_id, 
-        const char * device_name, bool state) {
-  Serial.print("Device "); Serial.print(device_name); 
-  Serial.print(" state: ");
-  if (state) {
-    Serial.println("ON");
-    turnOnSwitch();   
-  } else {
-    Serial.println("OFF");
-    turnOffSwitch();   
+//=============== Sinric Setup =================
+//==============================================
+#define HEARTBEAT_INTERVAL 300000 // 5 Minutes 
+
+uint64_t heartbeatTimestamp = 0;
+bool isConnected = false;
+
+void setPowerStateOnServer(String deviceId, String value);
+void setTargetTemperatureOnServer(String deviceId, String value, String scale);
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      isConnected = false;    
+      Serial.printf("[WSc] Webservice disconnected from sinric.com!\n");
+      printLcd(F("[WSc]disconnected"));
+      break;
+    case WStype_CONNECTED: {
+      isConnected = true;
+      Serial.printf("[WSc] Service connected to sinric.com at url: %s\n", payload);
+      Serial.printf("Waiting for commands from sinric.com ...\n");        
+      printLcd(F("[WSc]Sinric connected.."));
+      }
+      break;
+    case WStype_TEXT: {
+        sprintf(buff,"[WSc] get text: %s\n", payload);
+        Serial.printf(buff);
+        printLCD2(buff);
+        // Example payloads
+
+        // For Switch or Light device types
+        // https://developer.amazon.com/docs/device-apis/alexa-powercontroller.html
+        // {"deviceId": xxxx, "action": "setPowerState", value: "ON"} 
+
+        // For Light device type
+        // Look at the light example in github
+          
+        DynamicJsonBuffer jsonBuffer;
+        JsonObject& json = jsonBuffer.parseObject((char*)payload); 
+        String deviceId = json ["deviceId"];     
+        String action = json ["action"];
+        
+        if(action == "setPowerState") { // Switch or Light
+            String value = json ["value"];
+            if(value == "ON") {
+                turnOn(deviceId);
+            } else {
+                turnOff(deviceId);
+            }
+        }
+        else if (action == "SetTargetTemperature") {
+            String deviceId = json ["deviceId"];     
+            String action = json ["action"];
+            String value = json ["value"];
+        }
+        else if (action == "test") {
+            Serial.println("[WSc] received test command from sinric.com");
+            printLcd(F("[WSc]Received Test"));
+        }
+      }
+      break;
+    case WStype_BIN:
+      sprintf(buff,"[WSc] get binary: %u\n", length);
+      Serial.printf(buff);
+      printLCD2(buff);
+      break;
   }
+}
+void sinricSetup()
+{
+
+  // server address, port and URL
+  webSocket.begin("iot.sinric.com", 80, "/");
+
+  // event handler
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setAuthorization("apikey", MyApiKey);
+  
+  // try again every 5000ms if connection has failed
+  webSocket.setReconnectInterval(5000);   
+
+}
+void sinricHandle()
+{
+  webSocket.loop();
+  
+  if(isConnected) {
+      uint64_t now = millis();
+      
+      // Send heartbeat in order to avoid disconnections during ISP resetting
+      // IPs over night. Thanks @MacSass
+      if((now - heartbeatTimestamp) > HEARTBEAT_INTERVAL) {
+          heartbeatTimestamp = now;
+          webSocket.sendTXT("H");          
+      }
+  }   
+
 }
 
 //==============================================
@@ -241,6 +326,7 @@ void turnOnSwitch(){
     delay(200);
 
     switch_on = true;
+    t_count++;
     if(TESTING_MODE)checkSwitchState();
 }
 //==============================================
@@ -260,6 +346,7 @@ void turnOffSwitch(){
     delay(200);
 
     switch_on = false;
+    t_count++;
     if(TESTING_MODE)checkSwitchState();
 }
 //==============================================
@@ -273,7 +360,6 @@ void toggleSwitch(){
 //==============================================
 bool checkSwitchState(){
   
-  t_count++;
   bool lightOn = (digitalRead(LIGHT_SWITCH_PIN) == LOW);
   bool result =  (lightOn == switch_on);
 
@@ -281,6 +367,44 @@ bool checkSwitchState(){
 
   return result;
   
+}
+//==============================================
+void turnOn(String deviceId) {
+  if (deviceId == DORMLIGHT_ID) // Device ID of first device
+  {  
+    Serial.print("Turn on device id: ");
+    Serial.println(deviceId);
+    turnOnSwitch();//actuall servo code
+  } 
+  else if (deviceId == "5axxxxxxxxxxxxxxxxxxx") // Device ID of second device
+  { 
+    Serial.print("Turn on device id: ");
+    Serial.println(deviceId);
+    turnOffSwitch();
+  }
+  else {
+    Serial.print("Turn on for unknown device id: ");
+    Serial.println(deviceId);    
+  }     
+}
+
+//==============================================
+void turnOff(String deviceId) {
+   if (deviceId == DORMLIGHT_ID) // Device ID of first device
+   {  
+     Serial.print("Turn off Device ID: ");
+     Serial.println(deviceId);
+     turnOffSwitch();//actuall servo code
+   }
+   else if (deviceId == "5axxxxxxxxxxxxxxxxxxx") // Device ID of second device
+   { 
+     Serial.print("Turn off Device ID: ");
+     Serial.println(deviceId);
+  }
+  else {
+     Serial.print("Turn off for unknown device id: ");
+     Serial.println(deviceId);    
+  }
 }
 
 //==============================================
@@ -291,7 +415,6 @@ void setup() {
   Serial.println(F("HELLO Smart Light..."));
   myservo.attach(SERVO_PIN, 500, 2500);  
   Serial.println(F("Attached Servo"));
-
 
   initOLED();
   printLcd(F("Initializing LCD..."));
@@ -309,6 +432,7 @@ void setup() {
 
   // Bring up Wifi and Web server
   wifiSetup();
+  sinricSetup();
   webServerSetup();
   
 }
@@ -317,7 +441,8 @@ void setup() {
 //==============================================
 void loop() {
 
-  fauxmo.handle();
+
+  sinricHandle();
   server.handleClient();
   handleButton();
   
@@ -330,11 +455,44 @@ void loop() {
   printLCD2(buff,true);
 
   // Display Toggle Result 
-  sprintf(buff, "OK:%4d,Fail:%3d", t_success,t_fail);
+  sprintf(buff, "Toggled: %d", t_count);
   printLCD2(buff, false);
   Serial.println(buff);
 
 
   delay(1000);
+}
+
+// If you are going to use a push button to on/off the switch manually, use this function to update the status on the server
+// so it will reflect on Alexa app.
+// eg: setPowerStateOnServer("deviceid", "ON")
+void setPowerStateOnServer(String deviceId, String value) {
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["deviceId"] = deviceId;
+  root["action"] = "setPowerState";
+  root["value"] = value;
+  StreamString databuf;
+  root.printTo(databuf);
+  
+  webSocket.sendTXT(databuf);
+}
+
+//eg: setPowerStateOnServer("deviceid", "CELSIUS", "25.0")
+void setTargetTemperatureOnServer(String deviceId, String value, String scale) {
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["action"] = "SetTargetTemperature";
+  root["deviceId"] = deviceId;
+  
+  JsonObject& valueObj = root.createNestedObject("value");
+  JsonObject& targetSetpoint = valueObj.createNestedObject("targetSetpoint");
+  targetSetpoint["value"] = value;
+  targetSetpoint["scale"] = scale;
+   
+  StreamString databuf;
+  root.printTo(databuf);
+  
+  webSocket.sendTXT(databuf);
 }
 
