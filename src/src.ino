@@ -62,7 +62,7 @@
 Servo myservo;  // create servo object to control a servo
 
 int pos = 0;    // variable to store the servo position
-char buff[20];
+char buff[100];
 int back_track = 50;
 boolean switch_on = false;
 boolean toggleMode = false;
@@ -118,7 +118,7 @@ void printLCD2(char* str, bool clear = false) {
   }
   oled.println(str);
   oled.display();
-  ESP.wdtFeed();//reset watch dog
+  //ESP.wdtFeed();//reset watch dog
 #endif
 
 }
@@ -187,19 +187,17 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     case WStype_DISCONNECTED:
       isConnected = false;    
       Serial.printf("[WSc] Webservice disconnected from sinric.com!\n");
-      printLcd(F("[WSc]disconnected"));
+      //printLcd(F("[WSc]disconnected"));
       break;
     case WStype_CONNECTED: {
       isConnected = true;
       Serial.printf("[WSc] Service connected to sinric.com at url: %s\n", payload);
       Serial.printf("Waiting for commands from sinric.com ...\n");        
-      printLcd(F("[WSc]Sinric connected.."));
+      //printLcd(F("[WSc]Sinric connected.."));
       }
       break;
     case WStype_TEXT: {
-        sprintf(buff,"[WSc] get text: %s\n", payload);
-        Serial.printf(buff);
-        printLCD2(buff);
+        Serial.printf("[WSc] get text: %s\n", payload);
         // Example payloads
 
         // For Switch or Light device types
@@ -234,9 +232,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
       }
       break;
     case WStype_BIN:
-      sprintf(buff,"[WSc] get binary: %u\n", length);
-      Serial.printf(buff);
-      printLCD2(buff);
+      Serial.printf("[WSc] get binary: %u\n", length);
       break;
   }
 }
@@ -455,9 +451,8 @@ void loop() {
   printLCD2(buff,true);
 
   // Display Toggle Result 
-  sprintf(buff, "Toggled: %d", t_count);
-  printLCD2(buff, false);
-  Serial.println(buff);
+    sprintf(buff, "Toggled: %d", t_count);
+    printLCD2(buff, false);
 
 
   delay(1000);
