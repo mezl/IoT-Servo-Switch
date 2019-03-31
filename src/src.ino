@@ -11,28 +11,49 @@
 
 //GPIO0-GPIO15 can be INPUT, OUTPUT, or INPUT_PULLUP. GPIO16 can be INPUT, OUTPUT, or INPUT_PULLDOWN_16. I
 
-#define SERVO_PIN 14
 
+#define NODEMCU
 #define POS_OFF 160
 #define POS_ON 30
 
 #define TESTING_MODE false 
-#define LIGHT_SWITCH_PIN 12//only for testing
+#define LIGHT_SWITCH_PIN 0//only for testing
 
 
 #ifdef ESP8266
     #define INTERRUPT_PIN 15  // use pin 2 on Arduino Uno & most boards
     #define LED_PIN 0 // (Arduino is 13, Teensy is 11, Teensy++ is 6,Pro Micro RXLED 17)
-    #define FEATHER
-    #define OLED_WING
+    //#define FEATHER
+    //#define OLED_WING
 #endif
+
+
 
 #ifdef OLED_WING 
     #include <Adafruit_FeatherOLED.h>
     Adafruit_FeatherOLED oled = Adafruit_FeatherOLED();
-    #define BUTTON_A_PIN 0
-    #define BUTTON_B_PIN 16
-    #define BUTTON_C_PIN 2
+    //#define BUTTON_A_PIN 0
+    //#define BUTTON_B_PIN 16
+    //#define BUTTON_C_PIN 2
+#endif
+
+#ifdef NODEMCU
+  #include <Adafruit_FeatherOLED.h>
+  Adafruit_FeatherOLED oled = Adafruit_FeatherOLED();
+
+  //D0 GPIO-16
+  //D1 GPIO-5
+  
+
+  
+  #define BUTTON_A_PIN 0 
+  #define BUTTON_B_PIN 4
+  #define BUTTON_C_PIN 5
+  //#define SDA_PIN D2
+  //#define SCL_PIN D1
+  #define SERVO_PIN 10
+  #define OLED_RESET LED_BUILTIN
+  #define OLED_WING
 #endif
 
 #ifdef ESP8266 
@@ -128,7 +149,8 @@ void handleButton(){
 
   if (digitalRead(BUTTON_A_PIN) == LOW) {
     printLcd(F("BTN_A Pressed"),true);
-    turnOnSwitch();
+    //turnOnSwitch();
+    toggleSwitch();
   }
   if (digitalRead(BUTTON_B_PIN) == LOW) {
     printLcd(F("BTN_B Pressed"),true);
@@ -409,7 +431,8 @@ void turnOff(String deviceId) {
 void setup() {
   Serial.begin(BAUD);
   Serial.println(F("HELLO Smart Light..."));
-  myservo.attach(SERVO_PIN, 500, 2500);  
+  myservo.attach(SERVO_PIN, 500, 2500);
+   
   Serial.println(F("Attached Servo"));
 
   initOLED();
@@ -419,12 +442,14 @@ void setup() {
   pinMode(LIGHT_SWITCH_PIN, INPUT_PULLUP);
 
   // Do one toggle test
+  printLcd(F("Test Servo..."));
   pos = POS_OFF;
   myservo.write(pos);
   delay(1500);
   pos = POS_ON;
   myservo.write(pos);
   delay(1500);
+  printLcd(F("Done Servo"));
 
   // Bring up Wifi and Web server
   wifiSetup();
